@@ -228,3 +228,4 @@ class Discretization:
             boundaries = boundaries + [high_rounded]
 
         return boundaries
+
