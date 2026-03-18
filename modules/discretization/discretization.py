@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from math import log2
 
 
@@ -20,9 +21,9 @@ class Discretization:
     ----------
     method : str
         Key from METHODS dict. Defaults to 'entropy'.
-    column : str
+    column : str | None
         The numeric column to discretize.
-    class_column : str, optional
+    class_column : str | None
         Required only for entropy-based method.
     max_intervals : int
         Stopping criterion for entropy method. Defaults to 5.
@@ -38,8 +39,8 @@ class Discretization:
     def __init__(
         self,
         method: str = "entropy",
-        column: str = None,
-        class_column: str = None,
+        column: str | None = None,
+        class_column: str | None = None,
         max_intervals: int = 5,
         gain_threshold: float = 0.01,
     ):
@@ -49,8 +50,8 @@ class Discretization:
         self.max_intervals = max_intervals
         self.gain_threshold = gain_threshold
 
-        self.boundaries_ = []
-        self.report_ = {}
+        self.boundaries_: list[float] = []
+        self.report_: dict = {}
 
     def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -72,36 +73,35 @@ class Discretization:
         df = df.copy()
         series = df[self.column].dropna()
 
+        values: NDArray = series.to_numpy()
+
         if self.method == "entropy":
             if self.class_column is None or self.class_column not in df.columns:
                 raise ValueError("Entropy method requires a valid 'class_column'.")
-            boundaries = self._entropy_split(
-                series.values,
-                df.loc[series.index, self.class_column].values,
-                depth=0,
-            )
+            labels: NDArray = df.loc[series.index, self.class_column].to_numpy()
+            boundaries = self._entropy_split(values, labels, depth=0)
         elif self.method == "partition_345":
-            boundaries = self._partition_345(series.values)
+            boundaries = self._partition_345(values)
         else:
             raise ValueError(f"Unknown method '{self.method}'.")
 
         boundaries = sorted(set(boundaries))
         self.boundaries_ = boundaries
 
-        bins = [-np.inf] + boundaries + [np.inf]
-        labels = [f"({bins[i]:.2f}, {bins[i+1]:.2f}]" for i in range(len(bins) - 1)]
-        labels[0] = f"(-inf, {boundaries[0]:.2f}]"
-        labels[-1] = f"({boundaries[-1]:.2f}, inf)"
+        bins: list[float] = [-np.inf] + boundaries + [np.inf]
+        labels_str = [f"({bins[i]:.2f}, {bins[i+1]:.2f}]" for i in range(len(bins) - 1)]
+        labels_str[0] = f"(-inf, {boundaries[0]:.2f}]"
+        labels_str[-1] = f"({boundaries[-1]:.2f}, inf)"
 
         df[f"{self.column}_discretized"] = pd.cut(
-            df[self.column], bins=bins, labels=labels, include_lowest=True
+            df[self.column], bins=bins, labels=labels_str, include_lowest=True
         )
 
         self.report_ = {
             "method": self.method,
             "column": self.column,
             "boundaries": boundaries,
-            "num_intervals": len(labels),
+            "num_intervals": len(labels_str),
         }
 
         return df
@@ -114,7 +114,7 @@ class Discretization:
     # Entropy-Based Discretization
     # ------------------------------------------------------------------
 
-    def _entropy(self, class_labels: np.ndarray) -> float:
+    def _entropy(self, class_labels: NDArray) -> float:
         n = len(class_labels)
         if n == 0:
             return 0.0
@@ -122,51 +122,45 @@ class Discretization:
         probs = counts / n
         return -sum(p * log2(p) for p in probs if p > 0)
 
-    def _weighted_entropy(
-        self,
-        left_labels: np.ndarray,
-        right_labels: np.ndarray,
-    ) -> float:
+    def _weighted_entropy(self, left_labels: NDArray, right_labels: NDArray) -> float:
         total = len(left_labels) + len(right_labels)
         return (len(left_labels) / total) * self._entropy(left_labels) + (
             len(right_labels) / total
         ) * self._entropy(right_labels)
 
-    def _best_split(
-        self, values: np.ndarray, labels: np.ndarray
-    ) -> tuple[float, float]:
+    def _best_split(self, values: NDArray, labels: NDArray) -> tuple[float | None, float]:
         sorted_idx = np.argsort(values)
-        values, labels = values[sorted_idx], labels[sorted_idx]
+        values = values[sorted_idx]
+        labels = labels[sorted_idx]
 
-        best_gain, best_threshold = -np.inf, None
+        best_gain: float = -np.inf
+        best_threshold: float | None = None
 
         for i in range(1, len(values)):
             if values[i] == values[i - 1]:
                 continue
-            threshold = (values[i] + values[i - 1]) / 2
-            gain = self._entropy(labels) - self._weighted_entropy(
-                labels[:i], labels[i:]
-            )
+            threshold = float((values[i] + values[i - 1]) / 2)
+            gain = self._entropy(labels) - self._weighted_entropy(labels[:i], labels[i:])
             if gain > best_gain:
-                best_gain, best_threshold = gain, threshold
+                best_gain = gain
+                best_threshold = threshold
 
         return best_threshold, best_gain
 
     def _entropy_split(
         self,
-        values: np.ndarray,
-        labels: np.ndarray,
+        values: NDArray,
+        labels: NDArray,
         depth: int,
-        boundaries: list = None,
-    ) -> list:
+        boundaries: list[float] | None = None,
+    ) -> list[float]:
         if boundaries is None:
             boundaries = []
 
         if len(np.unique(labels)) <= 1:
             return boundaries
 
-        intervals_so_far = len(boundaries) + 1
-        if intervals_so_far >= self.max_intervals:
+        if len(boundaries) + 1 >= self.max_intervals:
             return boundaries
 
         threshold, gain = self._best_split(values, labels)
@@ -189,14 +183,15 @@ class Discretization:
     # ------------------------------------------------------------------
 
     def _round_down_to_msd(self, value: float, msd: float) -> float:
-        return np.floor(value / msd) * msd
+        return float(np.floor(value / msd) * msd)
 
     def _round_up_to_msd(self, value: float, msd: float) -> float:
-        return np.ceil(value / msd) * msd
+        return float(np.ceil(value / msd) * msd)
 
     def _get_msd(self, low: float, high: float) -> float:
-        magnitude = 10 ** np.floor(np.log10(abs(high - low))) if high != low else 1
-        return magnitude
+        if high == low:
+            return 1.0
+        return float(10 ** np.floor(np.log10(abs(high - low))))
 
     def _num_partitions(self, distinct_count: int) -> int:
         if distinct_count in (3, 6, 7, 9):
@@ -205,13 +200,13 @@ class Discretization:
             return 4
         elif distinct_count in (1, 5, 10):
             return 5
-        else:
-            return 3
+        return 3
 
-    def _partition_345(self, values: np.ndarray) -> list:
-        low_pct = np.percentile(values, 5)
-        high_pct = np.percentile(values, 95)
-        minimum, maximum = values.min(), values.max()
+    def _partition_345(self, values: NDArray) -> list[float]:
+        low_pct = float(np.percentile(values, 5))
+        high_pct = float(np.percentile(values, 95))
+        minimum = float(values.min())
+        maximum = float(values.max())
 
         msd = self._get_msd(low_pct, high_pct)
 
@@ -222,8 +217,7 @@ class Discretization:
         n_parts = self._num_partitions(distinct)
 
         step = (high_rounded - low_rounded) / n_parts
-
-        boundaries = [low_rounded + step * i for i in range(1, n_parts)]
+        boundaries: list[float] = [low_rounded + step * i for i in range(1, n_parts)]
 
         left_boundary = self._round_down_to_msd(minimum, msd / 10)
         right_boundary = self._round_up_to_msd(maximum, msd / 10)
