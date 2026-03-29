@@ -1,6 +1,6 @@
 from pipeline import PreprocessingPipeline
 from modules.discretization.discretization import Discretization
-from modules.data_reduction.data_reduction import DataReduction
+from modules.data_reduction.data_reduction import DataReduction, Histogram
 
 # ------------------------------------------------------------------
 # Pattern for each:
@@ -14,6 +14,15 @@ PreprocessingPipeline.register("Discretization", Discretization)
 # PreprocessingPipeline.register("Smoothing", Smoothing)
 PreprocessingPipeline.register("Data Reduction", DataReduction)
 # PreprocessingPipeline.register("Similarity", Similarity)
+
+
+
+# ------------------------------------------------------------------
+# Analysis modules — terminal, summarize data via analyze()
+# These do not modify current_df or pipeline history.
+# ------------------------------------------------------------------
+
+PreprocessingPipeline.register_analysis("Histogram", Histogram)
 
 # ------------------------------------------------------------------
 # Register ML modules here once that phase begins.

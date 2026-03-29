@@ -3,10 +3,12 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 
-import registry  # triggers all module registrations
+import registry
 from pipeline import PreprocessingPipeline
 
+# ------------------------------------------------------------------
 # Page Config
+# ------------------------------------------------------------------
 
 st.set_page_config(
     page_title="ML Dashboard",
@@ -15,7 +17,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ------------------------------------------------------------------
 # Styling
+# ------------------------------------------------------------------
 
 st.markdown("""
 <style>
@@ -107,13 +111,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ------------------------------------------------------------------
 # Session State
+# ------------------------------------------------------------------
 
 def init_session_state() -> None:
     defaults = {
         "pipeline": None,
         "df_loaded": False,
         "dataset_name": "",
+        "analysis_result": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -121,7 +128,9 @@ def init_session_state() -> None:
 
 init_session_state()
 
+# ------------------------------------------------------------------
 # Helpers
+# ------------------------------------------------------------------
 
 SAMPLE_DATASETS: dict[str, str] = {
     "Titanic": "datasets/titanic.csv",
@@ -150,7 +159,9 @@ def render_dataframe_stats(df: pd.DataFrame) -> None:
     col3.metric("Missing Values", int(df.isnull().sum().sum()))
     col4.metric("Numeric Columns", len(get_numeric_columns(df)))
 
+# ------------------------------------------------------------------
 # Sidebar — Module Parameters
+# ------------------------------------------------------------------
 
 def render_module_params(module_name: str) -> dict:
     """
@@ -165,11 +176,11 @@ def render_module_params(module_name: str) -> dict:
 
     params: dict = {"method": method_value}
 
-    if module_name == "Discretization":
-        df = st.session_state.pipeline.current_df
-        numeric_cols = get_numeric_columns(df)
-        all_cols = get_all_columns(df)
+    df = st.session_state.pipeline.current_df
+    numeric_cols = get_numeric_columns(df)
+    all_cols = get_all_columns(df)
 
+    if module_name == "Discretization":
         params["column"] = st.selectbox("Column to Discretize", numeric_cols)
 
         if method_value == "entropy":
@@ -180,11 +191,32 @@ def render_module_params(module_name: str) -> dict:
                 value=0.01, step=0.001, format="%.4f"
             )
 
+    elif module_name == "Data Reduction":
+        if method_value == "simple_random":
+            params["sample_size"] = st.number_input(
+                "Sample Size", min_value=1,
+                max_value=len(df), value=min(1000, len(df)), step=50
+            )
+            params["replacement"] = st.checkbox("Sample with Replacement", value=False)
+
+        elif method_value == "stratified":
+            params["column"] = st.selectbox("Grouping Column", all_cols)
+            params["sample_fraction"] = st.slider(
+                "Sample Fraction", min_value=0.05, max_value=1.0, value=0.1, step=0.05
+            )
+
+        elif method_value == "feature_selection":
+            params["variance_threshold"] = st.slider(
+                "Variance Threshold", min_value=0.0, max_value=5.0,
+                value=0.01, step=0.01,
+                help="Columns with variance below this value will be dropped."
+            )
+
     # ------------------------------------------------------------------
     # Add parameter blocks for new modules below as they are integrated:
     #
     # elif module_name == "Missing Values":
-    #     params["column"] = st.selectbox("Column", get_all_columns(df))
+    #     params["column"] = st.selectbox("Column", all_cols)
     #     params["strategy"] = ...
     #
     # elif module_name == "Smoothing":
@@ -193,7 +225,9 @@ def render_module_params(module_name: str) -> dict:
 
     return params
 
+# ------------------------------------------------------------------
 # Main Layout
+# ------------------------------------------------------------------
 
 st.markdown('<div class="main-title">⚙ ML Dashboard</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Data Preprocessing & Machine Learning Pipeline</div>', unsafe_allow_html=True)
@@ -255,7 +289,7 @@ with st.sidebar:
 
     st.markdown("")
     apply_btn = st.button("▶  Apply", use_container_width=True, type="primary")
-    
+
     col_undo, col_reset = st.columns(2)
     undo_btn = col_undo.button("↩ Undo", use_container_width=True)
     reset_btn = col_reset.button("⟳ Reset", use_container_width=True)
@@ -276,6 +310,7 @@ with st.sidebar:
 
     if reset_btn:
         pipeline.reset()
+        st.session_state.analysis_result = None
         st.rerun()
 
     st.divider()
@@ -364,24 +399,70 @@ with tabs[2]:
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-        if pipeline.history:
-            disc_col = f"{viz_col}_discretized"
-            if disc_col in pipeline.current_df.columns:
-                st.markdown('<div class="section-header">Discretized Intervals</div>', unsafe_allow_html=True)
-                counts = pipeline.current_df[disc_col].value_counts().reset_index()
-                counts.columns = ["interval", "count"]
-                fig3 = px.bar(
-                    counts, x="interval", y="count",
-                    title=f"Interval Distribution — {disc_col}",
-                    template="plotly_dark",
-                    color_discrete_sequence=["#4fc3f7"],
-                )
-                fig3.update_layout(
-                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                    font_family="IBM Plex Mono",
-                    xaxis_title="Interval", yaxis_title="Count",
-                )
-                st.plotly_chart(fig3, use_container_width=True)
+        disc_col = f"{viz_col}_discretized"
+        if disc_col in pipeline.current_df.columns:
+            st.markdown('<div class="section-header">Discretized Intervals</div>', unsafe_allow_html=True)
+            counts = pipeline.current_df[disc_col].value_counts().reset_index()
+            counts.columns = ["interval", "count"]
+            fig3 = px.bar(
+                counts, x="interval", y="count",
+                title=f"Interval Distribution — {disc_col}",
+                template="plotly_dark",
+                color_discrete_sequence=["#4fc3f7"],
+            )
+            fig3.update_layout(
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font_family="IBM Plex Mono",
+                xaxis_title="Interval", yaxis_title="Count",
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+
+    # -- Analysis Section --
+    analysis_modules = PreprocessingPipeline.get_registered_analysis_modules()
+    if analysis_modules:
+        st.divider()
+        st.markdown('<div class="section-header">Analysis</div>', unsafe_allow_html=True)
+
+        selected_analysis = st.selectbox("Analysis Module", analysis_modules, key="analysis_select")
+        analysis_methods = PreprocessingPipeline.get_methods_for_analysis(selected_analysis)
+        analysis_method_label = st.selectbox(
+            "Method", list(analysis_methods.keys()), key="analysis_method"
+        )
+
+        analysis_params: dict = {"method": analysis_methods[analysis_method_label]}
+
+        if selected_analysis == "Histogram":
+            analysis_params["column"] = st.selectbox(
+                "Column", get_numeric_columns(pipeline.current_df), key="hist_col"
+            )
+            analysis_params["num_buckets"] = st.slider(
+                "Number of Buckets", 2, 50, 10, key="hist_buckets"
+            )
+            analysis_params["allow_negatives"] = st.checkbox(
+                "Include Negative Values", value=True, key="hist_neg"
+            )
+
+        if st.button("Run Analysis", key="run_analysis"):
+            result = pipeline.analyze(selected_analysis, **analysis_params)
+            st.session_state.analysis_result = result
+            st.rerun()
+
+        if st.session_state.analysis_result is not None:
+            result = st.session_state.analysis_result
+            st.dataframe(result, use_container_width=True)
+
+            fig4 = px.bar(
+                result, x="Bucket_Range", y="Frequency_Count",
+                title=f"Histogram — {analysis_params.get('column', '')}",
+                template="plotly_dark",
+                color_discrete_sequence=["#4fc3f7"],
+            )
+            fig4.update_layout(
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                font_family="IBM Plex Mono",
+                xaxis_title="Bucket", yaxis_title="Count",
+            )
+            st.plotly_chart(fig4, use_container_width=True)
 
 # -- Tab 4: Full History --
 with tabs[3]:
