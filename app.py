@@ -441,6 +441,20 @@ with tabs[2]:
             analysis_params["allow_negatives"] = st.checkbox(
                 "Include Negative Values", value=True, key="hist_neg"
             )
+        elif selected_analysis == "Similarity":
+            selected_cols = st.multiselect(
+                "Columns (leave empty for all numeric)", get_numeric_columns(pipeline.current_df), key="sim_cols"
+            )
+            if selected_cols:
+                analysis_params["columns"] = selected_cols
+            
+            analysis_params["max_pairs"] = st.slider(
+                "Max Pairs Limit", 100, 5000, 500, step=100, key="sim_max_pairs"
+            )
+            if analysis_params["method"] == "minkowski":
+                analysis_params["p"] = st.slider(
+                    "Minkowski power (p)", 1, 10, 3, key="sim_p"
+                )
 
         if st.button("Run Analysis", key="run_analysis"):
             result = pipeline.analyze(selected_analysis, **analysis_params)
@@ -451,18 +465,33 @@ with tabs[2]:
             result = st.session_state.analysis_result
             st.dataframe(result, use_container_width=True)
 
-            fig4 = px.bar(
-                result, x="Bucket_Range", y="Frequency_Count",
-                title=f"Histogram — {analysis_params.get('column', '')}",
-                template="plotly_dark",
-                color_discrete_sequence=["#4fc3f7"],
-            )
-            fig4.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font_family="IBM Plex Mono",
-                xaxis_title="Bucket", yaxis_title="Count",
-            )
-            st.plotly_chart(fig4, use_container_width=True)
+            if selected_analysis == "Histogram":
+                fig4 = px.bar(
+                    result, x="Bucket_Range", y="Frequency_Count",
+                    title=f"Histogram — {analysis_params.get('column', '')}",
+                    template="plotly_dark",
+                    color_discrete_sequence=["#4fc3f7"],
+                )
+                fig4.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    font_family="IBM Plex Mono",
+                    xaxis_title="Bucket", yaxis_title="Count",
+                )
+                st.plotly_chart(fig4, use_container_width=True)
+            elif selected_analysis == "Similarity":
+                if not result.empty and "similarity_score" in result.columns:
+                    fig_sim = px.histogram(
+                        result, x="similarity_score",
+                        title=f"Distribution of {analysis_params.get('method', '').title()} Scores",
+                        template="plotly_dark",
+                        color_discrete_sequence=["#4fc3f7"],
+                    )
+                    fig_sim.update_layout(
+                        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                        font_family="IBM Plex Mono",
+                        xaxis_title="Score", yaxis_title="Frequency",
+                    )
+                    st.plotly_chart(fig_sim, use_container_width=True)
 
 # -- Tab 4: Full History --
 with tabs[3]:

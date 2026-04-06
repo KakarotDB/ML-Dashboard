@@ -1,6 +1,7 @@
 from pipeline import PreprocessingPipeline
 from modules.discretization.discretization import Discretization
 from modules.data_reduction.data_reduction import DataReduction, Histogram
+from modules.similarity.similarity import SimilarityAnalyzer
 
 # ------------------------------------------------------------------
 # Pattern for each:
@@ -23,6 +24,7 @@ PreprocessingPipeline.register("Data Reduction", DataReduction)
 # ------------------------------------------------------------------
 
 PreprocessingPipeline.register_analysis("Histogram", Histogram)
+PreprocessingPipeline.register_analysis("Similarity", SimilarityAnalyzer)
 
 # ------------------------------------------------------------------
 # Register ML modules here once that phase begins.
