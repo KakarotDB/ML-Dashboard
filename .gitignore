@@ -2,3 +2,9 @@
 __pycache__/
 GEMINI.md
 *.pyc
+
+
+__pycache__/
+*.pyc
+.venv/
+.env
