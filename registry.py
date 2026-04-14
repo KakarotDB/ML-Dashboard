@@ -2,6 +2,7 @@ from pipeline import PreprocessingPipeline
 from modules.discretization.discretization import Discretization
 from modules.data_reduction.data_reduction import DataReduction, Histogram
 from modules.similarity.similarity import SimilarityAnalyzer
+from modules.missing_values.missing_values import MissingValueEstimator
 
 # ------------------------------------------------------------------
 # Pattern for each:
@@ -11,7 +12,7 @@ from modules.similarity.similarity import SimilarityAnalyzer
 
 PreprocessingPipeline.register("Discretization", Discretization)
 
-# PreprocessingPipeline.register("Missing Values", MissingValueEstimator)
+PreprocessingPipeline.register("Missing Values", MissingValueEstimator)
 # PreprocessingPipeline.register("Smoothing", Smoothing)
 PreprocessingPipeline.register("Data Reduction", DataReduction)
 # PreprocessingPipeline.register("Similarity", Similarity)
