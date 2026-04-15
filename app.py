@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
+from sklearn.metrics import classification_report, confusion_matrix
 
 import registry
 from pipeline import PreprocessingPipeline
+from ml_pipeline import MLPipeline
 
 # ------------------------------------------------------------------
 # Page Config
@@ -118,6 +120,7 @@ st.markdown("""
 def init_session_state() -> None:
     defaults = {
         "pipeline": None,
+        "ml_pipeline": None,
         "df_loaded": False,
         "dataset_name": "",
         "analysis_result": None,
@@ -164,13 +167,10 @@ def render_dataframe_stats(df: pd.DataFrame) -> None:
 # ------------------------------------------------------------------
 
 def render_module_params(module_name: str) -> dict:
-    """
-    Dynamically renders parameter inputs for the selected module
-    and returns them as a kwargs dict ready to pass to pipeline.apply().
-
-    Add a new elif block here when a new module requires custom params.
-    """
     methods = PreprocessingPipeline.get_methods_for(module_name)
+    if not methods:
+        return {}
+    
     method_label = st.selectbox("Method", list(methods.keys()))
     method_value = methods[method_label]
 
@@ -190,6 +190,10 @@ def render_module_params(module_name: str) -> dict:
                 "Gain Threshold", min_value=0.0001, max_value=1.0,
                 value=0.01, step=0.001, format="%.4f"
             )
+
+    elif module_name == "Histogram Discretization":
+        params["column"] = st.selectbox("Column to Discretize", numeric_cols)
+        params["bins"] = st.slider("Number of Bins", min_value=2, max_value=50, value=5)
 
     elif module_name == "Data Reduction":
         if method_value == "simple_random":
@@ -212,16 +216,50 @@ def render_module_params(module_name: str) -> dict:
                 help="Columns with variance below this value will be dropped."
             )
 
-    # ------------------------------------------------------------------
-    # Add parameter blocks for new modules below as they are integrated:
-    #
-    # elif module_name == "Missing Values":
-    #     params["column"] = st.selectbox("Column", all_cols)
-    #     params["strategy"] = ...
-    #
-    # elif module_name == "Smoothing":
-    #     ...
-    # ------------------------------------------------------------------
+    elif module_name == "Missing Values":
+        params["column"] = st.selectbox("Column", all_cols)
+        
+        if method_value == "constant":
+            params["constant_val"] = st.text_input("Constant Value", value="Unknown")
+        elif method_value == "knn":
+            params["n_neighbors"] = st.slider("Number of Neighbors (k)", min_value=1, max_value=20, value=5)
+
+    elif module_name == "Data Smoothing":
+        params["column"] = st.selectbox("Column", numeric_cols)
+        
+        if method_value in ("bin_width", "bin_depth"):
+            params["num_bins"] = st.slider("Number of Bins", min_value=2, max_value=50, value=3)
+            params["smoothing_strategy"] = st.selectbox("Smoothing Strategy", ["mean", "median", "mode"])
+        elif method_value == "clustering":
+            params["n_clusters"] = st.slider("Number of Clusters (k)", min_value=2, max_value=20, value=3)
+
+    elif module_name == "Encoding":
+        params["apply_to_all"] = st.checkbox("Apply to ALL categorical columns", value=False)
+        
+        if not params["apply_to_all"]:
+            categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+            if not categorical_cols:
+                st.warning("No categorical columns found in the dataset.")
+                params["column"] = None
+            else:
+                params["column"] = st.selectbox("Column to Encode", categorical_cols)
+
+    return params
+
+def render_model_params(model_name: str) -> dict:
+    methods = MLPipeline.get_methods_for_model(model_name)
+    method_label = st.selectbox("Method", list(methods.keys()))
+    method_value = methods[method_label]
+
+    params: dict = {"method": method_value}
+
+    if model_name == "Decision Tree":
+        limit_depth = st.checkbox("Limit Max Depth", value=False)
+        if limit_depth:
+            params["max_depth"] = st.slider("Max Depth", min_value=1, max_value=50, value=5)
+        else:
+            params["max_depth"] = None
+        params["min_samples_split"] = st.slider("Min Samples Split", min_value=2, max_value=20, value=2)
 
     return params
 
@@ -248,6 +286,7 @@ if not st.session_state.df_loaded:
         if uploaded:
             df = load_dataframe(uploaded)
             st.session_state.pipeline = PreprocessingPipeline(df)
+            st.session_state.ml_pipeline = MLPipeline()
             st.session_state.df_loaded = True
             st.session_state.dataset_name = uploaded.name
             st.rerun()
@@ -260,6 +299,7 @@ if not st.session_state.df_loaded:
             if Path(path).exists():
                 df = load_dataframe(path)
                 st.session_state.pipeline = PreprocessingPipeline(df)
+                st.session_state.ml_pipeline = MLPipeline()
                 st.session_state.df_loaded = True
                 st.session_state.dataset_name = sample_choice
                 st.rerun()
@@ -273,239 +313,348 @@ if not st.session_state.df_loaded:
 # ------------------------------------------------------------------
 
 pipeline: PreprocessingPipeline = st.session_state.pipeline
+ml_pipeline: MLPipeline = st.session_state.ml_pipeline
 
 with st.sidebar:
     st.markdown(f"**Dataset:** `{st.session_state.dataset_name}`")
     st.caption(f"{pipeline.current_df.shape[0]} rows × {pipeline.current_df.shape[1]} cols")
     st.divider()
 
-    st.markdown('<div class="section-header">Apply Technique</div>', unsafe_allow_html=True)
-
-    registered = PreprocessingPipeline.get_registered_modules()
-    selected_module = st.selectbox("Module", registered)
-
-    st.markdown("")
-    params = render_module_params(selected_module)
-
-    st.markdown("")
-    apply_btn = st.button("▶  Apply", use_container_width=True, type="primary")
-
-    col_undo, col_reset = st.columns(2)
-    undo_btn = col_undo.button("↩ Undo", use_container_width=True)
-    reset_btn = col_reset.button("⟳ Reset", use_container_width=True)
-
-    if apply_btn:
-        try:
-            pipeline.apply(selected_module, **params)
-            st.success(f"{selected_module} applied.")
-            st.rerun()
-        except NotImplementedError:
-            st.warning("This module is not yet integrated.")
-        except Exception as e:
-            st.error(str(e))
-
-    if undo_btn and pipeline.history:
-        pipeline.undo()
-        st.rerun()
-
-    if reset_btn:
-        pipeline.reset()
-        st.session_state.analysis_result = None
-        st.rerun()
-
+    app_mode = st.radio("Navigation", ["Data Preprocessing", "Classifier Models"])
     st.divider()
-    st.markdown('<div class="section-header">Step History</div>', unsafe_allow_html=True)
 
-    history = pipeline.get_history_summary()
-    if not history:
-        st.caption("No steps applied yet.")
+    if app_mode == "Data Preprocessing":
+        st.markdown('<div class="section-header">Apply Technique</div>', unsafe_allow_html=True)
+
+        registered = PreprocessingPipeline.get_registered_modules()
+        selected_module = st.selectbox("Module", registered)
+
+        st.markdown("")
+        params = render_module_params(selected_module)
+
+        st.markdown("")
+        apply_btn = st.button("▶  Apply", use_container_width=True, type="primary")
+
+        col_undo, col_reset = st.columns(2)
+        undo_btn = col_undo.button("↩ Undo", use_container_width=True)
+        reset_btn = col_reset.button("⟳ Reset", use_container_width=True)
+
+        if apply_btn:
+            try:
+                pipeline.apply(selected_module, **params)
+                st.session_state.ml_pipeline = MLPipeline()
+                st.success(f"{selected_module} applied.")
+                st.rerun()
+            except NotImplementedError:
+                st.warning("This module is not yet integrated.")
+            except Exception as e:
+                st.error(str(e))
+
+        if undo_btn and pipeline.history:
+            pipeline.undo()
+            st.session_state.ml_pipeline = MLPipeline()
+            st.rerun()
+
+        if reset_btn:
+            pipeline.reset()
+            st.session_state.analysis_result = None
+            st.session_state.ml_pipeline = MLPipeline()
+            st.rerun()
+
+        st.divider()
+        st.markdown('<div class="section-header">Step History</div>', unsafe_allow_html=True)
+
+        history = pipeline.get_history_summary()
+        if not history:
+            st.caption("No steps applied yet.")
+        else:
+            for entry in reversed(history):
+                st.markdown(
+                    f'<div class="step-badge">'
+                    f'<span>#{entry["step"]}</span> {entry["name"]} — {entry["method"]}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
     else:
-        for entry in reversed(history):
-            st.markdown(
-                f'<div class="step-badge">'
-                f'<span>#{entry["step"]}</span> {entry["name"]} — {entry["method"]}'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown('<div class="section-header">Model Setup</div>', unsafe_allow_html=True)
+        
+        registered_models = MLPipeline.get_registered_models()
+        if not registered_models:
+            st.warning("No models registered.")
+        else:
+            selected_model = st.selectbox("Algorithm", registered_models)
+            
+            df = pipeline.current_df
+            all_cols = get_all_columns(df)
+            numeric_cols = get_numeric_columns(df)
+            categorical_cols = [c for c in all_cols if c not in numeric_cols]
+            
+            if categorical_cols:
+                st.info(f"**Note:** {len(categorical_cols)} categorical column(s) were excluded from selection. Use the **Encoding** module in the Data Preprocessing tab to convert them to numbers.")
+            
+            if not numeric_cols:
+                st.error("No numeric columns available for training. Please encode categorical columns first.")
+            else:
+                target_col = st.selectbox("Target Column", numeric_cols, index=len(numeric_cols)-1)
+                feature_cols = st.multiselect("Feature Columns", [c for c in numeric_cols if c != target_col], default=[c for c in numeric_cols if c != target_col])
+                test_size = st.slider("Test Size", 0.05, 0.5, 0.2, 0.05)
+                
+                st.divider()
+                st.markdown('<div class="section-header">Hyperparameters</div>', unsafe_allow_html=True)
+                model_params = render_model_params(selected_model)
+                
+                st.markdown("")
+                train_btn = st.button("▶  Train Model", use_container_width=True, type="primary")
+                
+                if train_btn:
+                    if not feature_cols:
+                        st.error("Please select at least one feature column.")
+                    else:
+                        try:
+                            ml_pipeline.train(
+                                df=df,
+                                model_name=selected_model,
+                                target_col=target_col,
+                                feature_cols=feature_cols,
+                                test_size=test_size,
+                                **model_params
+                            )
+                            st.success(f"{selected_model} trained successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error during training: {e}")
 
 # ------------------------------------------------------------------
 # Zone 3: Results Area
 # ------------------------------------------------------------------
 
-tabs = st.tabs(["CURRENT DATA", "BEFORE / AFTER", "VISUALIZE", "HISTORY"])
+if app_mode == "Data Preprocessing":
+    tabs = st.tabs(["CURRENT DATA", "BEFORE / AFTER", "VISUALIZE", "HISTORY"])
 
-# -- Tab 1: Current DataFrame --
-with tabs[0]:
-    st.markdown('<div class="section-header">Current State</div>', unsafe_allow_html=True)
-    render_dataframe_stats(pipeline.current_df)
-    st.markdown("")
-    st.dataframe(pipeline.current_df, use_container_width=True, height=420)
-
-# -- Tab 2: Before / After --
-with tabs[1]:
-    if not pipeline.history:
-        st.info("Apply a technique to see a before/after comparison.")
-    else:
-        last = pipeline.history[-1]
-        st.markdown(
-            f'<div class="section-header">Last Step — {last.step_name} ({last.method})</div>',
-            unsafe_allow_html=True,
-        )
-        render_report_card(last.report)
+    # -- Tab 1: Current DataFrame --
+    with tabs[0]:
+        st.markdown('<div class="section-header">Current State</div>', unsafe_allow_html=True)
+        render_dataframe_stats(pipeline.current_df)
         st.markdown("")
+        st.dataframe(pipeline.current_df, use_container_width=True, height=420)
 
-        b_col, a_col = st.columns(2, gap="medium")
-        with b_col:
-            st.caption("Before")
-            st.dataframe(last.before, use_container_width=True, height=380)
-        with a_col:
-            st.caption("After")
-            st.dataframe(last.after, use_container_width=True, height=380)
+    # -- Tab 2: Before / After --
+    with tabs[1]:
+        if not pipeline.history:
+            st.info("Apply a technique to see a before/after comparison.")
+        else:
+            last = pipeline.history[-1]
+            st.markdown(
+                f'<div class="section-header">Last Step — {last.step_name} ({last.method})</div>',
+                unsafe_allow_html=True,
+            )
+            render_report_card(last.report)
+            st.markdown("")
 
-# -- Tab 3: Visualize --
-with tabs[2]:
-    st.markdown('<div class="section-header">Visualize Column</div>', unsafe_allow_html=True)
-    numeric_cols = get_numeric_columns(pipeline.current_df)
+            b_col, a_col = st.columns(2, gap="medium")
+            with b_col:
+                st.caption("Before")
+                st.dataframe(last.before, use_container_width=True, height=380)
+            with a_col:
+                st.caption("After")
+                st.dataframe(last.after, use_container_width=True, height=380)
 
-    if not numeric_cols:
-        st.info("No numeric columns available to visualize.")
-    else:
-        viz_col = st.selectbox("Select column", numeric_cols, key="viz_col")
-        v1, v2 = st.columns(2, gap="medium")
+    # -- Tab 3: Visualize --
+    with tabs[2]:
+        st.markdown('<div class="section-header">Visualize Column</div>', unsafe_allow_html=True)
+        numeric_cols = get_numeric_columns(pipeline.current_df)
 
-        with v1:
-            fig = px.histogram(
-                pipeline.current_df, x=viz_col,
-                title=f"Distribution — {viz_col}",
-                template="plotly_dark",
-                color_discrete_sequence=["#4fc3f7"],
+        if not numeric_cols:
+            st.info("No numeric columns available to visualize.")
+        else:
+            viz_col = st.selectbox("Select column", numeric_cols, key="viz_col")
+            v1, v2 = st.columns(2, gap="medium")
+
+            with v1:
+                fig = px.histogram(
+                    pipeline.current_df, x=viz_col,
+                    title=f"Distribution — {viz_col}",
+                    template="plotly_dark",
+                    color_discrete_sequence=["#4fc3f7"],
+                )
+                fig.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    font_family="IBM Plex Mono",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with v2:
+                fig2 = px.box(
+                    pipeline.current_df, y=viz_col,
+                    title=f"Box Plot — {viz_col}",
+                    template="plotly_dark",
+                    color_discrete_sequence=["#4fc3f7"],
+                )
+                fig2.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    font_family="IBM Plex Mono",
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+            disc_col = f"{viz_col}_discretized"
+            if disc_col in pipeline.current_df.columns:
+                st.markdown('<div class="section-header">Discretized Intervals</div>', unsafe_allow_html=True)
+                counts = pipeline.current_df[disc_col].value_counts().reset_index()
+                counts.columns = ["interval", "count"]
+                fig3 = px.bar(
+                    counts, x="interval", y="count",
+                    title=f"Interval Distribution — {disc_col}",
+                    template="plotly_dark",
+                    color_discrete_sequence=["#4fc3f7"],
+                )
+                fig3.update_layout(
+                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                    font_family="IBM Plex Mono",
+                    xaxis_title="Interval", yaxis_title="Count",
+                )
+                st.plotly_chart(fig3, use_container_width=True)
+
+        # -- Analysis Section --
+        analysis_modules = PreprocessingPipeline.get_registered_analysis_modules()
+        if analysis_modules:
+            st.divider()
+            st.markdown('<div class="section-header">Analysis</div>', unsafe_allow_html=True)
+
+            selected_analysis = st.selectbox("Analysis Module", analysis_modules, key="analysis_select")
+            analysis_methods = PreprocessingPipeline.get_methods_for_analysis(selected_analysis)
+            analysis_method_label = st.selectbox(
+                "Method", list(analysis_methods.keys()), key="analysis_method"
+            )
+
+            analysis_params: dict = {"method": analysis_methods[analysis_method_label]}
+
+            if selected_analysis == "Histogram":
+                analysis_params["column"] = st.selectbox(
+                    "Column", get_numeric_columns(pipeline.current_df), key="hist_col"
+                )
+                analysis_params["num_buckets"] = st.slider(
+                    "Number of Buckets", 2, 50, 10, key="hist_buckets"
+                )
+                analysis_params["allow_negatives"] = st.checkbox(
+                    "Include Negative Values", value=True, key="hist_neg"
+                )
+            elif selected_analysis == "Similarity":
+                selected_cols = st.multiselect(
+                    "Columns (leave empty for all numeric)", get_numeric_columns(pipeline.current_df), key="sim_cols"
+                )
+                if selected_cols:
+                    analysis_params["columns"] = selected_cols
+                
+                analysis_params["max_pairs"] = st.slider(
+                    "Max Pairs Limit", 100, 5000, 500, step=100, key="sim_max_pairs"
+                )
+                if analysis_params["method"] == "minkowski":
+                    analysis_params["p"] = st.slider(
+                        "Minkowski power (p)", 1, 10, 3, key="sim_p"
+                    )
+
+            if st.button("Run Analysis", key="run_analysis"):
+                result = pipeline.analyze(selected_analysis, **analysis_params)
+                st.session_state.analysis_result = result
+                st.rerun()
+
+            if st.session_state.analysis_result is not None:
+                result = st.session_state.analysis_result
+                st.dataframe(result, use_container_width=True)
+
+                if selected_analysis == "Histogram":
+                    fig4 = px.bar(
+                        result, x="Bucket_Range", y="Frequency_Count",
+                        title=f"Histogram — {analysis_params.get('column', '')}",
+                        template="plotly_dark",
+                        color_discrete_sequence=["#4fc3f7"],
+                    )
+                    fig4.update_layout(
+                        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                        font_family="IBM Plex Mono",
+                        xaxis_title="Bucket", yaxis_title="Count",
+                    )
+                    st.plotly_chart(fig4, use_container_width=True)
+                elif selected_analysis == "Similarity":
+                    if not result.empty and "similarity_score" in result.columns:
+                        fig_sim = px.histogram(
+                            result, x="similarity_score",
+                            title=f"Distribution of {analysis_params.get('method', '').title()} Scores",
+                            template="plotly_dark",
+                            color_discrete_sequence=["#4fc3f7"],
+                        )
+                        fig_sim.update_layout(
+                            paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                            font_family="IBM Plex Mono",
+                            xaxis_title="Score", yaxis_title="Frequency",
+                        )
+                        st.plotly_chart(fig_sim, use_container_width=True)
+
+    # -- Tab 4: Full History --
+    with tabs[3]:
+        st.markdown('<div class="section-header">Full Pipeline History</div>', unsafe_allow_html=True)
+
+        if not pipeline.history:
+            st.info("No steps applied yet.")
+        else:
+            for entry in pipeline.get_history_summary():
+                with st.expander(f"Step {entry['step']} — {entry['name']} ({entry['method']})"):
+                    render_report_card(entry["report"])
+                    step = pipeline.get_step(entry["step"] - 1)
+                    b_col, a_col = st.columns(2)
+                    b_col.caption("Before")
+                    b_col.dataframe(step.before, use_container_width=True)
+                    a_col.caption("After")
+                    a_col.dataframe(step.after, use_container_width=True)
+
+else:
+    # Classifier Models Mode
+    tabs = st.tabs(["TRAINING", "TESTING & EVALUATION"])
+    
+    with tabs[0]:
+        st.markdown('<div class="section-header">Training Summary</div>', unsafe_allow_html=True)
+        if ml_pipeline.last_model_ is None:
+            st.info("Configure and train a model from the sidebar to see results here.")
+        else:
+            render_report_card(ml_pipeline.last_model_.get_report())
+            st.markdown("")
+            
+            st.markdown('<div class="section-header">Data Split</div>', unsafe_allow_html=True)
+            split = ml_pipeline.last_split_
+            col1, col2 = st.columns(2)
+            col1.metric("Training Samples", len(split["X_train"]))
+            col2.metric("Testing Samples", len(split["X_test"]))
+            
+    with tabs[1]:
+        st.markdown('<div class="section-header">Evaluation</div>', unsafe_allow_html=True)
+        if ml_pipeline.last_model_ is None:
+            st.info("Train a model first.")
+        else:
+            split = ml_pipeline.last_split_
+            X_test = split["X_test"]
+            y_test = split["y_test"]
+            
+            predictions = ml_pipeline.last_model_.predict(X_test)
+            
+            st.markdown("**Classification Report:**")
+            report = classification_report(y_test, predictions, output_dict=True)
+            report_df = pd.DataFrame(report).transpose()
+            st.dataframe(report_df.style.format("{:.3f}"), use_container_width=True)
+            
+            st.markdown("**Confusion Matrix:**")
+            cm = confusion_matrix(y_test, predictions)
+            
+            classes = [str(c) for c in ml_pipeline.last_model_.model.classes_]
+            fig = px.imshow(
+                cm, 
+                text_auto=True, 
+                color_continuous_scale="Blues",
+                labels=dict(x="Predicted Label", y="True Label"),
+                x=classes,
+                y=classes
             )
             fig.update_layout(
                 paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
                 font_family="IBM Plex Mono",
             )
             st.plotly_chart(fig, use_container_width=True)
-
-        with v2:
-            fig2 = px.box(
-                pipeline.current_df, y=viz_col,
-                title=f"Box Plot — {viz_col}",
-                template="plotly_dark",
-                color_discrete_sequence=["#4fc3f7"],
-            )
-            fig2.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font_family="IBM Plex Mono",
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-
-        disc_col = f"{viz_col}_discretized"
-        if disc_col in pipeline.current_df.columns:
-            st.markdown('<div class="section-header">Discretized Intervals</div>', unsafe_allow_html=True)
-            counts = pipeline.current_df[disc_col].value_counts().reset_index()
-            counts.columns = ["interval", "count"]
-            fig3 = px.bar(
-                counts, x="interval", y="count",
-                title=f"Interval Distribution — {disc_col}",
-                template="plotly_dark",
-                color_discrete_sequence=["#4fc3f7"],
-            )
-            fig3.update_layout(
-                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                font_family="IBM Plex Mono",
-                xaxis_title="Interval", yaxis_title="Count",
-            )
-            st.plotly_chart(fig3, use_container_width=True)
-
-    # -- Analysis Section --
-    analysis_modules = PreprocessingPipeline.get_registered_analysis_modules()
-    if analysis_modules:
-        st.divider()
-        st.markdown('<div class="section-header">Analysis</div>', unsafe_allow_html=True)
-
-        selected_analysis = st.selectbox("Analysis Module", analysis_modules, key="analysis_select")
-        analysis_methods = PreprocessingPipeline.get_methods_for_analysis(selected_analysis)
-        analysis_method_label = st.selectbox(
-            "Method", list(analysis_methods.keys()), key="analysis_method"
-        )
-
-        analysis_params: dict = {"method": analysis_methods[analysis_method_label]}
-
-        if selected_analysis == "Histogram":
-            analysis_params["column"] = st.selectbox(
-                "Column", get_numeric_columns(pipeline.current_df), key="hist_col"
-            )
-            analysis_params["num_buckets"] = st.slider(
-                "Number of Buckets", 2, 50, 10, key="hist_buckets"
-            )
-            analysis_params["allow_negatives"] = st.checkbox(
-                "Include Negative Values", value=True, key="hist_neg"
-            )
-        elif selected_analysis == "Similarity":
-            selected_cols = st.multiselect(
-                "Columns (leave empty for all numeric)", get_numeric_columns(pipeline.current_df), key="sim_cols"
-            )
-            if selected_cols:
-                analysis_params["columns"] = selected_cols
-            
-            analysis_params["max_pairs"] = st.slider(
-                "Max Pairs Limit", 100, 5000, 500, step=100, key="sim_max_pairs"
-            )
-            if analysis_params["method"] == "minkowski":
-                analysis_params["p"] = st.slider(
-                    "Minkowski power (p)", 1, 10, 3, key="sim_p"
-                )
-
-        if st.button("Run Analysis", key="run_analysis"):
-            result = pipeline.analyze(selected_analysis, **analysis_params)
-            st.session_state.analysis_result = result
-            st.rerun()
-
-        if st.session_state.analysis_result is not None:
-            result = st.session_state.analysis_result
-            st.dataframe(result, use_container_width=True)
-
-            if selected_analysis == "Histogram":
-                fig4 = px.bar(
-                    result, x="Bucket_Range", y="Frequency_Count",
-                    title=f"Histogram — {analysis_params.get('column', '')}",
-                    template="plotly_dark",
-                    color_discrete_sequence=["#4fc3f7"],
-                )
-                fig4.update_layout(
-                    paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                    font_family="IBM Plex Mono",
-                    xaxis_title="Bucket", yaxis_title="Count",
-                )
-                st.plotly_chart(fig4, use_container_width=True)
-            elif selected_analysis == "Similarity":
-                if not result.empty and "similarity_score" in result.columns:
-                    fig_sim = px.histogram(
-                        result, x="similarity_score",
-                        title=f"Distribution of {analysis_params.get('method', '').title()} Scores",
-                        template="plotly_dark",
-                        color_discrete_sequence=["#4fc3f7"],
-                    )
-                    fig_sim.update_layout(
-                        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-                        font_family="IBM Plex Mono",
-                        xaxis_title="Score", yaxis_title="Frequency",
-                    )
-                    st.plotly_chart(fig_sim, use_container_width=True)
-
-# -- Tab 4: Full History --
-with tabs[3]:
-    st.markdown('<div class="section-header">Full Pipeline History</div>', unsafe_allow_html=True)
-
-    if not pipeline.history:
-        st.info("No steps applied yet.")
-    else:
-        for entry in pipeline.get_history_summary():
-            with st.expander(f"Step {entry['step']} — {entry['name']} ({entry['method']})"):
-                render_report_card(entry["report"])
-                step = pipeline.get_step(entry["step"] - 1)
-                b_col, a_col = st.columns(2)
-                b_col.caption("Before")
-                b_col.dataframe(step.before, use_container_width=True)
-                a_col.caption("After")
-                a_col.dataframe(step.after, use_container_width=True)
