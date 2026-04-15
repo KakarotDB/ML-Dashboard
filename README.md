@@ -6,7 +6,7 @@ A comprehensive data preprocessing and machine learning dashboard built with Pyt
 
 ## Architecture & Data Flow
 
-The project is built on a modular, dual-pipeline architecture separating data engineering (preprocessing) from data science (model training). 
+The project is built on a modular, dual-pipeline architecture separating data engineering (preprocessing) from data science (model training).
 
 ```mermaid
 graph TD
@@ -68,19 +68,25 @@ ML-Dashboard/
 **Prerequisites:** Python 3.10 or higher.
 
 1. **Set up a virtual environment:**
+
    ```powershell
    py -3.14 -m venv .venv
    .venv\Scripts\activate
    ```
+
    *(Note: Adjust the python command depending on your OS and installed version, e.g., `python3 -m venv .venv`)*
 
 2. **Install dependencies:**
+
    ```powershell
    pip install -r requirements.txt
    ```
 
 3. **Launch the dashboard:**
+
    ```powershell
    streamlit run app.py
    ```
+
    This will start the local server and automatically open the interactive dashboard in your default web browser (typically at `http://localhost:8501`).
+

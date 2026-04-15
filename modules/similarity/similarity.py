@@ -20,6 +20,8 @@ class SimilarityAnalyzer:
     manhattan  : City-block distance (L1 norm). Lower means more similar.
     minkowski  : Generalised Lp norm (p configurable, default 3).
     pearson    : Linear correlation as a similarity score.
+    spearman   : Rank correlation as a similarity score.
+    
 
     The returned DataFrame contains one row per pair with columns:
         point_i          – index of the anchor row
@@ -45,6 +47,7 @@ class SimilarityAnalyzer:
         "Manhattan Distance": "manhattan",
         "Minkowski Distance": "minkowski",
         "Pearson Correlation": "pearson",
+        "Spearman Correlation": "spearman",
     }
 
     def __init__(
@@ -165,6 +168,7 @@ class SimilarityAnalyzer:
             "manhattan": self._manhattan,
             "minkowski": self._minkowski,
             "pearson": self._pearson,
+            "spearman": self._spearman,
         }
         fn = dispatch.get(self.method)
         if fn is None:
@@ -205,3 +209,20 @@ class SimilarityAnalyzer:
         if a.std() == 0.0 or b.std() == 0.0:
             return 0.0
         return float(np.corrcoef(a, b)[0, 1])
+    
+    @staticmethod
+    def _spearman(a: NDArray, b: NDArray) -> float:
+        """
+        Computes Spearman's rank correlation.
+        Returns 0.0 when either vector has a constant rank to avoid NaN.
+        """
+        rank_a = pd.Series(a).rank().to_numpy()
+        rank_b = pd.Series(b).rank().to_numpy()
+        
+        if rank_a.std() == 0.0 or rank_b.std() == 0.0:
+            return 0.0
+            
+        return float(np.corrcoef(rank_a, rank_b)[0, 1])
+    
+
+
