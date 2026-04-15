@@ -2,8 +2,8 @@
 
 A data preprocessing and machine learning dashboard built with Python and Streamlit.
 This is our mini project for the Data Mining course. The goal is to have a single
-interactive dashboard where we can apply all our preprocessing techniques to a dataset
-and visualize what each step does in real time.
+interactive dashboard where we can apply all our preprocessing techniques to a dataset,
+visualize what each step does in real time, and immediately train and evaluate Machine Learning Classification Models on that data.
 
 ---
 
@@ -11,14 +11,14 @@ and visualize what each step does in real time.
 
 ```
 ML-Dashboard/
-├── app.py                          # Streamlit dashboard (do not modify)
-├── pipeline.py                     # Central pipeline orchestrator (do not modify)
-├── registry.py                     # Wire your module in here when ready
-├── test_discretization.py          # Example of how to test your module (do not include in commits)
+├── app.py                          # Main Streamlit dashboard UI (do not modify core logic)
+├── pipeline.py                     # Central preprocessing orchestrator (Data Engineering)
+├── ml_pipeline.py                  # Central machine learning orchestrator (Model Training)
+├── registry.py                     # Wire your new modules and models here when ready
 ├── requirements.txt
 ├── datasets/
 │   └── titanic.csv                 # Default sample dataset
-└── modules/
+└── modules/                        # Preprocessing and ML Modules live here
     ├── discretization/
     │   └── discretization.py
     ├── missing_values/
@@ -27,18 +27,21 @@ ML-Dashboard/
     │   └── smoothing.py
     ├── data_reduction/
     │   └── data_reduction.py
-    ├── histogram_discretization/
+    ├── encoding/
+    │   └── encoding.py
+    ├── histogram_disc/
     │   └── histogram_discretization.py
-    └── similarity/
-        └── similarity.py
+    ├── similarity/
+    │   └── similarity.py
+    └── ClassifierModels/
+        └── DecisionTree.py
 ```
 
-The only files you need to touch are:
+The primary files you need to touch when adding new features are:
 
 - Your own module file inside `modules/your_folder/`
-- `registry.py` when your module is ready to be integrated
-
-Do not modify `pipeline.py` or `app.py`.
+- `registry.py` (to register your module to the correct pipeline)
+- `app.py` (only to add UI inputs for your module's parameters inside `render_module_params` or `render_model_params`)
 
 ---
 
@@ -52,30 +55,50 @@ py -3.14 -m venv .venv
 pip install -r requirements.txt
 ```
 
+*(Note: Adjust the python command depending on your OS/version, e.g., `python3 -m venv .venv`)*
+
 Once your venv is active you should see `(.venv)` at the start of your terminal line.
 Always make sure this is active before running anything.
 
-To start the dashboard:
+To start the dashboard locally:
 
 ```powershell
 streamlit run app.py
 ```
+This will automatically open the interactive dashboard in your web browser.
 
 ---
 
-## How to Write Your Module
+## How the Dashboard Works
 
-This is the most important part so please read it carefully.
+The dashboard is split into two primary modes (toggled via the Sidebar navigation):
 
-Every module must follow the same structure. The pipeline does not care what your
-algorithm does internally, it only cares that your class looks like this:
+### 1. Data Preprocessing Pipeline
+This mode allows you to load raw data, apply transformations sequentially, and visualize the results.
+It maintains a strict history (Undo/Reset functionality) and displays Before/After comparisons. 
+- **Transformation Modules** (e.g., Missing Values, Encoding): These actually change the DataFrame and are appended to history.
+- **Analysis Modules** (e.g., Similarity, Histogram): These summarize or analyze data *without* changing the actual DataFrame state.
+
+### 2. Classifier Models
+This mode allows you to pick the cleaned dataset from the Preprocessing phase and train a Machine Learning classification model on it. 
+It handles the Train/Test splitting securely, dropping NAs automatically for selected features. It displays:
+- **Training Summary:** Hyperparameters, tree statistics, split sizes.
+- **Evaluation:** Scikit-Learn Classification Report (Accuracy, Precision, Recall) and an interactive Plotly Confusion Matrix.
+
+*(Note: Categorical features must be converted using the `Encoding` module in the Preprocessing tab before they can be used in the Classifier tab).*
+
+---
+
+## How to Write Your Preprocessing Module
+
+Every transformation module must follow the same duck-typed structure. The pipeline does not care what your algorithm does internally, it only cares that your class looks like this:
 
 ```python
 class YourModuleName:
 
+    # 1. Non-negotiable dict mapping Dropdown labels -> internal keys
     METHODS = {
         "Display Name For Dropdown": "internal_key",
-        "Another Method": "another_key",
     }
 
     def __init__(self, method: str = "default_key", column: str | None = None, ...):
@@ -84,195 +107,94 @@ class YourModuleName:
         # your other params
         self.report_: dict = {}
 
+    # 2. Must accept and return a DataFrame
     def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        # do your processing here
-        # always work on a copy, never mutate the input
-        df = df.copy()
-        # ...
+        df = df.copy() # always copy!
+        # do your processing here...
         return df
+
+    # 3. Must return a flat dictionary
+    def get_report(self) -> dict:
+        return self.report_
+```
+
+---
+
+## How to Write Your Machine Learning Model
+
+ML Models follow a slightly different contract and are handled by `MLPipeline`.
+
+```python
+class YourModelModule:
+
+    METHODS = {
+        "Gini Impurity": "gini",
+        "Entropy": "entropy",
+    }
+
+    def __init__(self, method: str = "gini", **kwargs):
+        self.method = method
+        # instantiate your sklearn model here
+        self.model = ...
+        self.report_: dict = {}
+
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
+        self.model.fit(X, y)
+        self.report_ = {"Model": "Name", "Hyperparam": self.method}
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return self.model.predict(X)
 
     def get_report(self) -> dict:
         return self.report_
 ```
 
-Three things are non-negotiable:
-
-1. `METHODS` dict must exist as a class-level attribute
-2. `fit_transform(df)` must accept a DataFrame and return a DataFrame
-3. `get_report()` must return a dict describing what was done
-
-That is all the pipeline needs from you. You can add as many internal helper methods
-as you want, structure your logic however makes sense, use whatever libraries you need.
-As long as those three things are there, your module will plug in without any issues.
-
----
-
-## The METHODS Dict
-
-The dashboard reads your `METHODS` dict to automatically build the method dropdown for
-your module. So whatever you put in there is what the user sees.
-
-```python
-METHODS = {
-    "Mean Imputation": "mean",
-    "Median Imputation": "median",
-    "KNN Imputation": "knn",
-}
-```
-
-The key is the display label, the value is what gets passed to your constructor as
-`method`. Keep the display names clear and readable since the professor will see them.
-
----
-
-## Parameters and the Constructor
-
-All your configurable options go in `__init__`. The dashboard passes whatever parameters
-are relevant when calling your module, so name them clearly.
-
-Some general guidelines:
-
-- Use `str | None = None` for optional string parameters, not `str = None`
-- Use type hints for everything, we are on Python 3.14
-- Use `NDArray` from `numpy.typing` for numpy arrays, not bare `np.ndarray`
-- Default values should make the module usable out of the box without tweaking
-
----
-
-## Working With DataFrames
-
-A few rules to keep things consistent across everyone's code:
-
-Always copy the input DataFrame at the start of `fit_transform`:
-
-```python
-def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    ...
-```
-
-Never hardcode a dataset path anywhere in your module. Your module receives a DataFrame,
-it does not know or care where that DataFrame came from.
-
-Use `.to_numpy()` instead of `.values` when converting Series or DataFrame columns to
-numpy arrays. The type hints work out cleaner and it is the recommended way in newer
-pandas versions:
-
-```python
-values = df["Age"].to_numpy()
-```
-
-Handle NaN values gracefully. Either skip them or fill them, but do not let your code
-crash on a column that has missing values. The missing value module will usually run
-before others in the pipeline, but we cannot guarantee the order the user applies things.
-
----
-
-## The get_report Method
-
-This is what gets displayed to the user after your module runs, so make it informative.
-Return a flat dict with whatever is most relevant about what your algorithm did:
-
-```python
-def get_report(self) -> dict:
-    return {
-        "method": self.method,
-        "column": self.column,
-        "values_filled": 12,
-        "strategy": "mean",
-    }
-```
-
-Avoid nested dicts or lists inside the report, keep it flat so it renders cleanly
-in the dashboard.
-
 ---
 
 ## Registering Your Module
 
-Once your module is working correctly, open `registry.py` and:
+Once your module is working correctly, open `registry.py` and register it:
 
+**For a Preprocessing Module:**
 ```python
-from modules.missing_values.missing_values import MissingValueEstimator
-PreprocessingPipeline.register("Missing Values", MissingValueEstimator)
+from modules.your_folder.your_file import YourModule
+PreprocessingPipeline.register("Your Feature", YourModule)
 ```
 
-That is all you need to do. The dashboard will automatically pick up your module,
-add it to the module dropdown, and build the UI for it.
+**For an ML Model:**
+```python
+from modules.ClassifierModels.YourModel import YourModel
+MLPipeline.register_model("Your Model", YourModel)
+```
+
+Finally, open `app.py` and add the UI sliders/dropdowns for your specific parameters inside `render_module_params(module_name)` or `render_model_params(model_name)`.
 
 ---
 
-## Testing Your Module Before Integrating
+## Code Style & DataFrames
 
-Before you register anything, test your module in isolation. Create a file in the
-root of the project called `test_yourmodule.py` and do something like this:
-
-```python
-import pandas as pd
-from modules.your_folder.your_file import YourClass
-
-df = pd.read_csv("datasets/titanic.csv")
-
-module = YourClass(method="your_method", column="Age")
-result = module.fit_transform(df)
-
-print(result.head(20))
-print(module.get_report())
-```
-
-Check that:
-
-- The output DataFrame has the changes you expected
-- NaN rows are handled and do not crash anything
-- `get_report()` returns something sensible
-- Running it twice on the same DataFrame gives the same result
-
-Only integrate into `registry.py` once all of this is working cleanly.
-
----
-
-## Code Style
-
-Try to follow these basics so the
-codebase stays readable for everyone:
-
-- Keep functions short. If a function is getting long, break it into smaller private
-  methods prefixed with an underscore like `_calculate_entropy()`
-- Private helper methods go below the public ones in the class
-- Write a docstring for your class and for `fit_transform`. You do not need docstrings
-  on every single internal helper but the public interface should be documented
-- No print statements anywhere. Use `get_report()` to surface information
-- No hardcoded magic numbers sitting in the middle of logic. Give them a name:
-
-  ```python
-  # bad
-  boundaries = np.percentile(values, 5), np.percentile(values, 95)
-
-  # good
-  LOWER_PERCENTILE = 5
-  UPPER_PERCENTILE = 95
-  boundaries = np.percentile(values, LOWER_PERCENTILE), np.percentile(values, UPPER_PERCENTILE)
-  ```
+- **Copying Data:** Always copy the input DataFrame at the start of `fit_transform` (`df = df.copy()`).
+- **Numpy:** Use `.to_numpy()` instead of `.values` when converting pandas Series to arrays. Use `NDArray` from `numpy.typing` for type hints.
+- **NaN Handling:** Handle NaN values gracefully in preprocessing. Either skip them or fill them, but do not let your code crash. (The ML pipeline automatically drops NaNs before fitting the model, but preprocessing modules must be defensive).
+- **No Hardcoded Paths:** Your module receives a DataFrame, it does not know or care where that DataFrame came from.
+- **Flat Reports:** `get_report()` must return a flat dictionary (no nested objects).
+- **Docstrings:** Write docstrings for your class and public methods. Keep internal helpers private with an underscore (e.g., `_my_helper()`).
 
 ---
 
 ## Git Practices
 
-When your module is done and tested, open a pull request
-
-Commit messages should say what you actually did:
+When your module is done and tested, commit it with a clear, descriptive message:
 
 ```
 # bad
 git commit -m "changes"
-git commit -m "fixed stuff"
 
 # good
 git commit -m "[ADDED] add median and KNN imputation strategies"
 git commit -m "[FIXED] fix NaN handling in fit_transform for object columns"
 ```
 
-Please do not commit your `.venv` folder, the `.gitignore` already handles this
-but double check before pushing.
+Please do not commit your `.venv` folder or test scratchpad files.
 
 ---
