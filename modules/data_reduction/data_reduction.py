@@ -47,6 +47,7 @@ class DataReduction:
         variance_threshold: float = 0.01,
         drop_cols: list[str] | None = None,
         n_components: int = 2,
+        pca_cols: list[str] | None = None,
     ):
         self.method = method
         self.column = column
@@ -56,6 +57,7 @@ class DataReduction:
         self.variance_threshold = variance_threshold
         self.drop_cols = drop_cols or []
         self.n_components = n_components
+        self.pca_cols = pca_cols or []
 
         self.report_: dict = {"status": "No transformation applied yet"}
 
@@ -156,9 +158,13 @@ class DataReduction:
         from sklearn.decomposition import PCA
         from sklearn.preprocessing import StandardScaler
         
-        numeric_df = df.select_dtypes(include="number")
+        target_cols = self.pca_cols if self.pca_cols else df.select_dtypes(include="number").columns.tolist()
+        
+        # Only use numeric columns from the requested list
+        numeric_df = df[target_cols].select_dtypes(include="number")
+        
         if numeric_df.empty:
-            self.report_ = {"error": "No numeric columns available for PCA."}
+            self.report_ = {"error": "No valid numeric columns available for PCA."}
             return df
             
         # PCA requires data without NaNs. We impute with mean temporarily.
@@ -176,11 +182,13 @@ class DataReduction:
         pca_cols = [f"PC{i+1}" for i in range(n_comps)]
         pca_df = pd.DataFrame(principal_components, columns=pca_cols, index=df.index)
         
-        non_numeric_cols = df.select_dtypes(exclude="number").columns.tolist()
-        reduced_df = pd.concat([df[non_numeric_cols], pca_df], axis=1)
+        # Keep everything EXCEPT the columns we just compressed
+        cols_to_keep = [c for c in df.columns if c not in numeric_df.columns]
+        reduced_df = pd.concat([df[cols_to_keep], pca_df], axis=1)
         
         self.report_ = {
             "method_applied": "PCA (Dimensionality Reduction)",
+            "columns_compressed": len(numeric_df.columns),
             "components_kept": n_comps,
             "explained_variance_ratio": [round(float(v), 4) for v in pca.explained_variance_ratio_],
             "total_variance_explained": round(float(sum(pca.explained_variance_ratio_)), 4)

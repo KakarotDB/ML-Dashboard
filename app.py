@@ -220,7 +220,8 @@ def render_module_params(module_name: str) -> dict:
             params["drop_cols"] = st.multiselect("Columns to Drop", all_cols)
 
         elif method_value == "pca":
-            numeric_count = len(numeric_cols)
+            params["pca_cols"] = st.multiselect("Columns for PCA (leave empty for all numeric)", numeric_cols, default=numeric_cols)
+            numeric_count = len(params["pca_cols"]) if params["pca_cols"] else len(numeric_cols)
             if numeric_count == 0:
                 st.warning("No numeric columns available for PCA.")
                 params["n_components"] = 0
