@@ -65,10 +65,14 @@ class CategoricalEncoder:
                 if valid_mask.any():
                     # Fit and transform only non-NaN values
                     encoded_vals = le.fit_transform(df_copy.loc[valid_mask, col].astype(str))
+                    
+                    # Bypass strict StringDtype or CategoricalDtype constraints by casting to object
+                    df_copy[col] = df_copy[col].astype(object)
+                    
                     df_copy.loc[valid_mask, col] = encoded_vals
                     
                     # Convert to float to allow NaNs to remain if there were any
-                    df_copy[col] = df_copy[col].astype(float)
+                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
                     columns_processed += 1
 
             elif self.method == "onehot":
