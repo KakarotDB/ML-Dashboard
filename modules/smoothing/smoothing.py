@@ -10,6 +10,9 @@ class DataSmoother:
     Supports Equal-Width/Depth Binning, Linear Regression, and K-Means Clustering.
     """
 
+    RANDOM_SEED = 42
+    N_INIT = 10
+
     # 1. Non-negotiable METHODS dict for the dashboard dropdown
     METHODS = {
         "Binning (Equal Width)": "bin_width",
@@ -51,7 +54,6 @@ class DataSmoother:
 
         # Use .to_numpy() per guidelines
         values: NDArray = df_copy.loc[valid_mask, self.column].to_numpy()
-        smoothed_values = np.zeros_like(values, dtype=float)
 
         # Route to appropriate private helper method
         if self.method in ("bin_width", "bin_depth"):
@@ -100,7 +102,7 @@ class DataSmoother:
         for chunk, idxs in zip(chunks, indices_chunks):
             if len(chunk) == 0:
                 continue
-            
+
             if self.smoothing_strategy == "median":
                 val = np.median(chunk)
             elif self.smoothing_strategy == "mode":
@@ -123,12 +125,8 @@ class DataSmoother:
 
     def _apply_clustering(self, values: NDArray) -> NDArray:
         """Replaces values with the centroid of their assigned K-Means cluster."""
-        RANDOM_SEED = 42
-        N_INIT = 10
         X = values.reshape(-1, 1)
-        
-        kmeans = KMeans(n_clusters=self.n_clusters, n_init=N_INIT, random_state=RANDOM_SEED)
+        kmeans = KMeans(n_clusters=self.n_clusters, n_init=self.N_INIT, random_state=self.RANDOM_SEED)
         kmeans.fit(X)
-        
         centroids = kmeans.cluster_centers_[kmeans.labels_]
         return centroids.flatten()
