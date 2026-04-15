@@ -216,6 +216,18 @@ def render_module_params(module_name: str) -> dict:
                 help="Columns with variance below this value will be dropped."
             )
 
+        elif method_value == "drop_columns":
+            params["drop_cols"] = st.multiselect("Columns to Drop", all_cols)
+
+        elif method_value == "pca":
+            numeric_count = len(numeric_cols)
+            if numeric_count == 0:
+                st.warning("No numeric columns available for PCA.")
+                params["n_components"] = 0
+            else:
+                max_comps = min(10, numeric_count)
+                params["n_components"] = st.slider("Number of Principal Components", min_value=1, max_value=max_comps, value=min(2, max_comps))
+
     elif module_name == "Missing Values":
         params["column"] = st.selectbox("Column", all_cols)
         

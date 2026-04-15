@@ -1,13 +1,11 @@
 import pandas as pd
+import numpy as np
 
 
 class DataReduction:
     """
     Module for performing data reduction techniques.
-    Includes numerosity reduction (sampling) and dimensionality reduction (feature selection).
-
-    Note: The histogram technique is implemented separately in the Histogram class
-    below, as it is a terminal analysis operation and does not transform the pipeline.
+    Includes numerosity reduction (sampling), feature selection, and dimensionality reduction (PCA).
 
     Parameters
     ----------
@@ -23,12 +21,18 @@ class DataReduction:
         Fraction of rows to sample per group for stratified sampling.
     variance_threshold : float
         Columns with variance below this are dropped during feature selection.
+    drop_cols : list[str] | None
+        Columns to explicitly drop.
+    n_components : int
+        Number of principal components to keep for PCA.
     """
 
     METHODS = {
         "Simple Random Sampling": "simple_random",
         "Stratified Sampling": "stratified",
         "Heuristic Feature Selection": "feature_selection",
+        "Drop Columns": "drop_columns",
+        "PCA (Principal Components)": "pca",
     }
 
     RANDOM_SEED = 42
@@ -41,6 +45,8 @@ class DataReduction:
         replacement: bool = False,
         sample_fraction: float = 0.1,
         variance_threshold: float = 0.01,
+        drop_cols: list[str] | None = None,
+        n_components: int = 2,
     ):
         self.method = method
         self.column = column
@@ -48,6 +54,8 @@ class DataReduction:
         self.replacement = replacement
         self.sample_fraction = sample_fraction
         self.variance_threshold = variance_threshold
+        self.drop_cols = drop_cols or []
+        self.n_components = n_components
 
         self.report_: dict = {"status": "No transformation applied yet"}
 
@@ -61,6 +69,10 @@ class DataReduction:
             return self._stratified(df)
         elif self.method == "feature_selection":
             return self._feature_selection(df)
+        elif self.method == "drop_columns":
+            return self._drop_columns(df)
+        elif self.method == "pca":
+            return self._pca(df)
         else:
             self.report_ = {"error": f"Unknown method key: {self.method}"}
             return df
@@ -126,6 +138,52 @@ class DataReduction:
             "variance_threshold": self.variance_threshold,
             "features_dropped": len(features_to_drop),
             "dropped_columns": ", ".join(features_to_drop) if features_to_drop else "None",
+        }
+        return reduced_df
+
+    def _drop_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        cols_to_drop = [c for c in self.drop_cols if c in df.columns]
+        reduced_df = df.drop(columns=cols_to_drop)
+        
+        self.report_ = {
+            "method_applied": "Drop Columns",
+            "columns_dropped": ", ".join(cols_to_drop) if cols_to_drop else "None",
+            "total_dropped": len(cols_to_drop)
+        }
+        return reduced_df
+
+    def _pca(self, df: pd.DataFrame) -> pd.DataFrame:
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
+        
+        numeric_df = df.select_dtypes(include="number")
+        if numeric_df.empty:
+            self.report_ = {"error": "No numeric columns available for PCA."}
+            return df
+            
+        # PCA requires data without NaNs. We impute with mean temporarily.
+        clean_numeric_df = numeric_df.fillna(numeric_df.mean())
+        
+        # Scaling is essential for PCA
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(clean_numeric_df)
+        
+        n_comps = min(self.n_components, scaled_data.shape[1])
+        pca = PCA(n_components=n_comps, random_state=self.RANDOM_SEED)
+        
+        principal_components = pca.fit_transform(scaled_data)
+        
+        pca_cols = [f"PC{i+1}" for i in range(n_comps)]
+        pca_df = pd.DataFrame(principal_components, columns=pca_cols, index=df.index)
+        
+        non_numeric_cols = df.select_dtypes(exclude="number").columns.tolist()
+        reduced_df = pd.concat([df[non_numeric_cols], pca_df], axis=1)
+        
+        self.report_ = {
+            "method_applied": "PCA (Dimensionality Reduction)",
+            "components_kept": n_comps,
+            "explained_variance_ratio": [round(float(v), 4) for v in pca.explained_variance_ratio_],
+            "total_variance_explained": round(float(sum(pca.explained_variance_ratio_)), 4)
         }
         return reduced_df
 
