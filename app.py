@@ -257,6 +257,13 @@ def render_module_params(module_name: str) -> dict:
             else:
                 params["column"] = st.selectbox("Column to Encode", categorical_cols)
 
+    elif module_name == "Data Scaling":
+        selected_cols = st.multiselect(
+            "Columns to Scale (leave empty for all numeric)", 
+            numeric_cols
+        )
+        params["columns"] = selected_cols if selected_cols else "all_numeric"
+
     return params
 
 def render_model_params(model_name: str) -> dict:
