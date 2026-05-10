@@ -6,6 +6,7 @@ from modules.similarity.similarity import SimilarityAnalyzer
 from modules.missing_values.missing_values import MissingValueEstimator
 from modules.smoothing.smoothing import DataSmoother
 from modules.encoding.encoding import CategoricalEncoder
+from modules.scaling.scaling import DataScaler
 # ------------------------------------------------------------------
 # Pattern for each:
 #   from modules.<folder>.<file> import <ClassName>
@@ -18,6 +19,7 @@ PreprocessingPipeline.register("Missing Values", MissingValueEstimator)
 PreprocessingPipeline.register("Data Smoothing", DataSmoother)
 PreprocessingPipeline.register("Data Reduction", DataReduction)
 PreprocessingPipeline.register("Encoding", CategoricalEncoder)
+PreprocessingPipeline.register("Data Scaling", DataScaler)
 
 
 
